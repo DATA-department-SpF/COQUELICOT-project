@@ -1,0 +1,79 @@
+
+# Load necessary libraries
+```{r}
+library(readr)     # To read datasets 
+library(dplyr)      # For data manipulation
+library(survey)     # For survey design and analysis
+library(here)
+```
+
+# Load the dataset
+```{r}
+df <- read_csv(here("raw_data", "Coq_2013.csv"))
+head(df)
+```
+
+# Create age classes and filter relevant cities and observations
+```{r}
+# Create age categories
+df$clage <- cut(df$age,
+                         breaks = c(-Inf, 20, 26, 36,46,56, Inf),
+                         labels = c("1: 18-20", "2: 21-25", "3: 26-35", "4: 36-45", "5: 46-55", "6: >=56"),
+                         right = FALSE)  # right=FALSE ensures that intervals are closed on the left and open on the right
+# Keep only selected cities (1 to 5) and eligible samples
+df <- df %>% 
+  filter(ville_num >= 1 & ville_num <= 5)
+# Keep only non-missing values for selected variables
+df <- df[!is.na(df$antihcv), ] 
+df <- df[!is.na(df$arn), ] 
+df <- df %>%
+  filter(arn != 99)
+```
+
+
+# Declare the survey design
+```{r}
+dfw <- svydesign(
+  id = ~cserv + nqes,               # PSU (primary sampling unit) and secondary sampling unit (nqes)
+  strata = ~ville_num,              # Strata variable
+  weights = ~poids,             # Survey weights
+  fpc = ~FPC_structure + FPC_UD,              # FPC for each stage
+  data = df,                   # The dataset being used
+  vce = "linearized",               # Variance estimation method
+  nest= TRUE,
+  single.unit = "certainty",         # Single unit handling
+  lonely.psu = "adjust"  # Handle single PSU as certainty
+)
+
+options(survey.adjust.domain.lonely=TRUE)
+options(survey.lonely.psu="adjust")
+```
+
+
+# Example analysis: Age mean and CI
+```{r}
+svymean(~age, dfw)
+```
+```{r}
+ci_result <- confint(svymean(~age, dfw))  # Get confidence intervals
+ci_result
+```
+
+# Example analysis: antiHCV
+```{r}
+# Calculate confidence intervals for a categorical variable
+ci_vhc <- svyciprop(~antihcv, dfw)
+# Print results
+print(ci_vhc)
+```
+
+
+#Example analysis: Cross-tabulation (injvie x ville x sexe)
+```{r}
+tab <- svytable(~ injvie + ville_num +sexe, dfw)
+prop.table(tab) * 100
+```
+
+
+
+

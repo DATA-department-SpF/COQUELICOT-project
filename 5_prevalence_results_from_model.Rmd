@@ -1,0 +1,48 @@
+
+# Load necessary libraries
+```{r}
+library(readr)       # for reading CSV files
+library(survey)      # for survey design and complex survey analysis
+library(dplyr)       # for data manipulation
+library(here)
+```
+
+```{r, include=FALSE, warning=F}
+# Load dataset
+coq_combined <- read_csv(here("final", "Coq_combined.csv"))
+coq_combined$antihcv <- as.numeric(as.character(coq_combined$antihcv))
+```
+
+
+# Regression model
+```{r}
+# Transform age (following fractional polynomial approach used in Stata)
+#from stata: age_1: (a/10)^0.5 and age_2: age/10
+coq_combined$age_1<- (coq_combined$age / 10)^0.5
+coq_combined$age_2 <- (coq_combined$age / 10)
+
+#Survey design
+ps_combined <- svydesign(id = ~cserv+nqes, strata = ~ville_num, weights = ~wc, data = coq_combined,nest=TRUE)
+
+# Set edition factor with reference category = 2004
+ps_combined$variables$edit <- factor(ps_combined$variables$edit, levels = c("2004", "2013", "2023"))
+ps_combined$variables$edit <- relevel(ps_combined$variables$edit, ref = "2004")
+
+# Logistic regression with fractional polynomial terms for age
+modello1_fp <- svyglm(antihcv ~ age_1 + age_2 + edit, 
+                      design = ps_combined, 
+                      family = binomial(link = "logit"))
+
+
+
+# Extract AIC
+aic_val <- AIC(modello1_fp)
+
+# Extract Null Deviance
+null_dev <- modello1_fp$null.deviance
+res_dev <- modello1_fp$deviance
+# Visualizza il sommario del modello
+summary(modello1_fp)
+```
+
+

@@ -1,0 +1,261 @@
+
+1- Loads data and sets up a survey design.
+2- Bootstraps samples per survey year (2004, 2013, 2023) with weighted duplication based on wc.
+3- Fits a logistic regression model with fractional polynomials (age) + year effect for each bootstrap.
+4- Computes age-dependent prevalence P(a, t) and incidence λ(a, t) curves.
+5- Summarizes bootstrap results (median & 95% CI) and exports them to Excel.
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(survey)
+library(openxlsx)
+library(mfp)
+library(here)
+library(readr)
+options(warn=-1)
+library(writexl)
+
+```
+# Load datasets
+```{r, include=FALSE, warning=F}
+coq_combined <- read_csv(here("final", "Coq_combined.csv"))
+```
+
+```{r}
+# Set parameters for bootstrapping
+n_bootstrap <- 2000  # Number of bootstrap samples
+sample_size_2004 <- nrow(coq_combined[coq_combined$edit == 2004, ])
+sample_size_2013 <- nrow(coq_combined[coq_combined$edit == 2013, ])
+sample_size_2023 <- nrow(coq_combined[coq_combined$edit == 2023, ])
+
+data_2004 <- coq_combined[coq_combined$edit == 2004, ]
+data_2013 <- coq_combined[coq_combined$edit == 2013, ]
+data_2023 <- coq_combined[coq_combined$edit == 2023, ]
+
+# Initialize lists to store bootstrap samples for each year
+bootstrap_samples_2004 <- vector("list", n_bootstrap)
+bootstrap_samples_2013 <- vector("list", n_bootstrap)
+bootstrap_samples_2023 <- vector("list", n_bootstrap)
+
+concatenated_bootstrap_samples <- vector("list", n_bootstrap)
+# Function to generate a bootstrap sample based on survey weight duplication
+generate_and_sort_bootstrap <- function(data, sample_size) {
+  # Duplicate individuals based on survey weights
+  weighted_data <- data[rep(seq_len(nrow(data)), data$wc), ]
+  
+  # Assign a random number to each individual
+  weighted_data$random_number <- runif(nrow(weighted_data))
+  
+  # Sort by survey year ('edit') and the random number
+  weighted_data <- weighted_data %>% arrange(edit, random_number)
+  
+  # Select the first n individuals to form the sample
+  sampled_data <- head(weighted_data, sample_size)
+  
+  return(sampled_data)
+}
+
+# Generate bootstrap samples
+for (i in 1:n_bootstrap) {
+  bootstrap_samples_2004[[i]] <- generate_and_sort_bootstrap(data_2004, sample_size_2004)
+  bootstrap_samples_2013[[i]] <- generate_and_sort_bootstrap(data_2013, sample_size_2013)
+  bootstrap_samples_2023[[i]] <- generate_and_sort_bootstrap(data_2023, sample_size_2023)
+  
+  concatenated_bootstrap_samples[[i]] <- rbind(bootstrap_samples_2004[[i]], 
+                                                bootstrap_samples_2013[[i]], 
+                                                bootstrap_samples_2023[[i]])
+}
+
+```
+
+
+```{r}
+# Define functions to calculate prevalence and incidence
+
+calculate_prevalence <- function(sample) {
+  # Logistic regression with fractional polynomials
+  sample$age_1 <- (sample$age / 10)^0.5
+  sample$age_2 <- (sample$age / 10)
+
+  ps_combined <- svydesign(ids = ~ nqes+cserv, strata=~ville_num,weights = ~ wc, data = sample,nest=TRUE)
+
+  ps_combined$variables$edit <- factor(ps_combined$variables$edit, levels = c("2004", "2013", "2023"))
+  ps_combined$variables$edit <- relevel(ps_combined$variables$edit, ref = "2004")
+
+  modello1_fp <- svyglm(antihcv ~ age_1 + age_2 + edit, 
+                      design = ps_combined, 
+                      family = binomial(link = "logit"))
+
+  coefficients <- coef(modello1_fp)
+
+# Assign coefficients to variables
+  alpha <- coefficients["(Intercept)"]
+  age_1_coeff <- coefficients["age_1"]
+  age_2_coeff <- coefficients["age_2"]
+  edit2013  <- coefficients["edit2013"]
+  edit2023  <- coefficients["edit2023"]
+
+  return(list(
+    alpha = alpha,
+    age_1_coeff = as.numeric(age_1_coeff),
+    age_2_coeff = as.numeric(age_2_coeff),
+    edit2013 = as.numeric(edit2013),
+    edit2023 = as.numeric(edit2023)
+  ))  # Replace with actual prevalence calculation if needed
+}
+
+#compute fractional polynomial η(age) --> (see SI paper)
+eta <- function(a) {
+  
+  coeff_I1 <- as.numeric(prevalence$age_1_coeff)
+  coeff_I2 <- as.numeric(prevalence$age_2_coeff)
+  return((coeff_I1 * (a / 10)^0.5) + coeff_I2 * (a / 10))
+}
+
+# First derivative of η(age)
+eta_first <- function(a) {
+  coeff_I1 <- as.numeric(prevalence$age_1_coeff)
+  coeff_I2 <- as.numeric(prevalence$age_2_coeff)
+  return(((coeff_I1 * 0.5 / sqrt(10)) / sqrt(a)) + (coeff_I2 / 10))
+}
+# Age-dependent prevalence function
+P<- function(a, t) {
+  α <- as.numeric(prevalence$alpha)
+  c1 <- as.numeric(prevalence$edit2013)
+  c2 <- as.numeric(prevalence$edit2023)
+  
+  if (t == 2004) {
+    return(exp(α + eta(a)) / (1 + exp(α + eta(a))))
+  } else if (t == 2013) {
+    return(exp(α + eta(a) + c1) / (1 + exp(α + eta(a) + c1)))
+  } else if (t == 2023) {
+    return(exp(α + eta(a) + c2) / (1 + exp(α + eta(a) + c2)))
+  } else {
+    stop("Year must be 2004, 2013, or 2023.")
+  }
+}
+# Age-dependent incidence function
+λ <- function(a, t) {
+  #Distribution from Leon et al 2016, ref table 2 main paper
+  #seroreversion and clerance
+  γ <- rbinom(1, nrow(coq_combined), 0.001) / nrow(coq_combined)
+  γ_first <- rbinom(1, nrow(coq_combined), 0.0048) / nrow(coq_combined)
+  γ_sec <- rbinom(1, nrow(coq_combined), 0.0048) / nrow(coq_combined)
+  #Death rate
+  μ1 <- rpois(1, 22)/1000
+
+
+  if (t==2004){
+    #DU that recived treatments
+    x<-0
+    y<-0
+    #yearly proportion of new drug users
+    β <- runif(1, 0.01, 0.03)
+    }
+  if (t==2013){
+    #DU that recived treatments
+    x<-0.09
+    y<-0
+    #yearly proportion of new drug users
+    β <- runif(1, 0.01, 0.03)
+  }
+    if (t==2023){
+    #DU that recived treatments
+    x<-0.18
+    y<-0.227
+    #yearly proportion of new drug users
+    β <- runif(1, 0.01, 0.022)}
+  
+  p_value <- P(a, t)
+  inc <- (eta_first(a) * p_value * (1 - p_value) + (β - μ1) - (β - μ1 - γ *(1-x-y) - γ_first*x - γ_sec*y) * p_value) / (1 - p_value)
+  return(inc * 100)
+}
+
+# Storage lists for prevalence and incidence values
+prevalences <- numeric(n_bootstrap * 3)
+
+
+lambda_2004_samples <- list()
+lambda_2013_samples <- list()
+lambda_2023_samples <- list()
+
+# Run bootstrap prevalence and incidence estimation across 2000 samples
+for (i in 1:n_bootstrap) {
+  # Calculate prevalence for each year and store
+  prevalence <- calculate_prevalence(concatenated_bootstrap_samples[[i]])
+
+  a_values <- seq(18, 55, length.out = 1000)
+  lambda_values_2004 <- λ(a_values, t = 2004)
+  lambda_values_2013 <- λ(a_values,  t = 2013)
+  lambda_values_2023 <- λ(a_values,  t = 2023)
+  
+  lambda_2004_samples[[i]] <- lambda_values_2004
+  lambda_2013_samples[[i]] <- lambda_values_2013
+  lambda_2023_samples[[i]] <- lambda_values_2023
+}
+
+
+# Convert the lists to data frames for easier manipulation and summary
+lambda_2004_df <- do.call(cbind, lambda_2004_samples)
+lambda_2013_df <- do.call(cbind, lambda_2013_samples)
+lambda_2023_df <- do.call(cbind, lambda_2023_samples)
+
+# Calculate row-wise statistics for each year
+lambda_2004_summary <- data.frame(
+  a_values = a_values,
+  median = apply(lambda_2004_df, 1, median),
+  lower_95 = apply(lambda_2004_df, 1, quantile, probs = 0.025),
+  upper_95 = apply(lambda_2004_df, 1, quantile, probs = 0.975)
+)
+
+lambda_2013_summary <- data.frame(
+  a_values = a_values,
+  median = apply(lambda_2013_df, 1, median),
+  lower_95 = apply(lambda_2013_df, 1, quantile, probs = 0.025),
+  upper_95 = apply(lambda_2013_df, 1, quantile, probs = 0.975)
+)
+
+lambda_2023_summary <- data.frame(
+  a_values = a_values,
+  median = apply(lambda_2023_df, 1, median),
+  lower_95 = apply(lambda_2023_df, 1, quantile, probs = 0.025),
+  upper_95 = apply(lambda_2023_df, 1, quantile, probs = 0.975)
+)
+
+
+# Append the summary statistics as new columns in the original datasets
+lambda_2004_df <- cbind(lambda_2004_df, 
+                        median = lambda_2004_summary$median, 
+                        lower_95 = lambda_2004_summary$lower_95, 
+                        upper_95 = lambda_2004_summary$upper_95)
+
+lambda_2013_df <- cbind(lambda_2013_df, 
+                        median = lambda_2013_summary$median, 
+                        lower_95 = lambda_2013_summary$lower_95, 
+                        upper_95 = lambda_2013_summary$upper_95)
+
+lambda_2023_df <- cbind(lambda_2023_df, 
+                        median = lambda_2023_summary$median, 
+                        lower_95 = lambda_2023_summary$lower_95, 
+                        upper_95 = lambda_2023_summary$upper_95)
+
+
+```
+
+```{r}
+
+# Save the results_df data frame as an Excel file
+# Ensure lambda_2004_df is a data frame
+lambda_2004_df <- as.data.frame(lambda_2004_df)
+lambda_2013_df <- as.data.frame(lambda_2013_df)
+lambda_2023_df <- as.data.frame(lambda_2023_df)
+
+
+# Save the data frame as an Excel file
+write_xlsx(lambda_2004_df, here("final", "incidence_bootstrap_04.xlsx"))
+write_xlsx(lambda_2013_df, here("final", "incidence_bootstrap_13.xlsx"))
+write_xlsx(lambda_2023_df, here("final", "incidence_bootstrap_23.xlsx"))
+```
+
+

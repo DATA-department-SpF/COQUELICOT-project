@@ -1,0 +1,127 @@
+
+# Load necessary libraries
+```{r}
+library(haven)
+library(readr)  
+library(lubridate)
+library(Hmisc)
+library(survey)
+library(gtsummary)
+library(srvyr)
+library(gt)
+library(dplyr)
+library(here)
+```
+
+# Load the dataset
+```{r}
+df <-  read_csv(here("final", "Coq_combined.csv"))
+
+df <- df %>%
+  filter(edit == 2013)
+
+head(df)
+```
+
+#Loop to calculate prevalence by age (all individuals)
+```{r}
+# Create empty dataframe to store results
+results_df <- data.frame(age = numeric(0), serohcv_binary = character(0), proportion = numeric(0), n_poids = numeric(0))
+
+# Loop through each unique, sorted age value
+for (x in head(sort(unique(df$age)), -1)) {
+# Filter the data frame for the current age
+df_new <- df %>%
+    filter(age == x)  
+# Define the survey design for the filtered data
+dfw <- svydesign(id = ~cserv+nqes, strata = ~ville_num, fpc = ~FPC_structure + FPC_UD, weights = ~wc, data = df_new,vce = "linearized",
+        nest = TRUE,
+        single.unit = "certainty",
+        lonely.psu = "adjust")
+options(survey.adjust.domain.lonely=TRUE)
+options(survey.lonely.psu="adjust")
+
+# Tabulate anti-HCV status
+tab <- svytable(~ antihcv , dfw)
+# Convert to proportions (%)
+prop_tab <- prop.table(tab) * 100
+n_people <- nrow(df_new)
+n_poids <- sum(df_new$wc)
+# Convert table to data frame and add age and weight info
+tab_df <- as.data.frame(prop_tab)
+tab_df$age <- x
+tab_df$n_poids <- n_poids
+  
+# Append the results to the final data frame
+results_df <- rbind(results_df, tab_df)
+}
+
+# Keep only antihcv == 1 (positive)
+results_df <- results_df %>% 
+  filter(antihcv == 1 )
+print(results_df)
+
+
+library(writexl)
+
+# Save the results_df data frame as an Excel file
+write_xlsx(results_df, here("final", "prevalence_final_results_13.xlsx"))
+
+```
+
+
+
+#Loop to calculate prevalence by age among people who inject drugs (injvie == 1)
+```{r}
+# Create empty dataframe for results
+results_df <- data.frame(age = numeric(0), serohcv_binary = character(0), proportion = numeric(0), n_poids = numeric(0))
+
+# Loop through each unique, sorted age value
+for (x in sort(unique(df$age))) {
+   # Subset data for current age and injecting drug use history
+  df_new <- df %>%
+    filter(age == x, injvie == 1)
+  
+  # If no data for current age, append zeros and move to next age group
+  if (nrow(df_new) == 0) {
+    zero_row <- data.frame(age = x, antihcv = "1", Freq = 0, n_poids = 0)
+    results_df <- rbind(results_df, zero_row)
+    next  # Move to the next age group
+  }
+
+  # Define the survey design for the filtered data
+  dfw <- svydesign(
+id = ~cserv+nqes, strata = ~ville_num, fpc = ~FPC_structure + FPC_UD, weights = ~wc, data = df_new,vce = "linearized",
+        nest = TRUE,
+        single.unit = "certainty",
+        lonely.psu = "adjust"  
+  )
+  options(survey.adjust.domain.lonely = TRUE)
+  options(survey.lonely.psu = "adjust")
+  
+  # Create a table of proportions for the antihcv variable
+  tab <- svytable(~antihcv, dfw)
+  prop_tab <- prop.table(tab) * 100
+  
+  # Convert the table to a data frame
+  tab_df <- as.data.frame(prop_tab)
+  
+  # Add age and total number of people for the current group
+  tab_df$age <- x
+  tab_df$n_poids <- sum(df_new$wc)
+  
+  # Append the results to the final data frame
+  results_df <- rbind(results_df, tab_df)
+}
+
+
+# Filter the results to keep only antihcv == 1
+results_df <- results_df %>%
+  filter(antihcv == 1)
+
+# View the results data frame
+print(results_df)
+
+
+```
+

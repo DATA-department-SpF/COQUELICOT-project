@@ -1,0 +1,70 @@
+---
+title: "Descriptive Stats 2011"
+author: "chiara sabbatini"
+date: "2024-09-24"
+output:
+  word_document: default
+  html_document: default
+---
+# Load libraries
+```{r}
+library(tidyverse)
+library(survey)
+library(here)
+```
+
+# Import datasets
+```{r, include=FALSE, warning=F}
+coq_04 <- read_csv(here("raw_data", "Coq_2004.csv"))
+coq_13 <- read_csv(here("raw_data", "Coq_2013.csv"))
+coq_23 <- read_csv(here("raw_data", "Coq_2023.csv"))
+
+for (i in 3:5) {
+  coq_04[[i]] <- as.numeric(coq_04[[i]])
+  coq_13[[i]] <- as.numeric(coq_13[[i]])
+  coq_23[[i]] <- as.numeric(coq_23[[i]])
+}
+```
+
+
+```{r}
+# Functions for coefficient of variation (CV) and design effect (deff)
+cv_weight <- function(weights) {
+  return(sd(weights) / mean(weights) * 100)
+}
+
+deff_weight <- function(weights) {
+  CV <- cv_weight(weights)
+  return(1 + (CV / 100)^2)
+}
+
+# Calculate design effects for each dataset
+deff_2004 <- deff_weight(coq_04$poids)
+deff_2013 <- deff_weight(coq_13$poids)
+deff_2023 <- deff_weight(coq_23$poids)
+
+# Compute weighting coefficients based on design effect
+alpha_2004 <- (1/deff_2004)/ ((1/deff_2004) + (1/deff_2013) + (1/deff_2023))
+alpha_2013 <- (1/deff_2013)/ ((1/deff_2004) + (1/deff_2013) + (1/deff_2023))
+alpha_2023 <- (1/deff_2023)/ ((1/deff_2004) + (1/deff_2013) + (1/deff_2023))
+
+# Recalculate weights for each dataset
+coq_04$wc <- alpha_2004 * coq_04$poids
+coq_13$wc <- alpha_2013 * coq_13$poids
+coq_23$wc <- alpha_2023 * coq_23$poids
+
+# Combine all datasets and remove rows with missing values
+df_combined_04_13 <- coq_13 |> bind_rows(coq_04)
+coq_combined <- df_combined_04_13 |> bind_rows(coq_23)
+
+```
+
+
+
+```{r}
+# Save combined dataset
+write.csv(coq_combined , here("final", "Coq_combined.csv"), row.names = FALSE)
+
+```
+
+
