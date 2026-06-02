@@ -8,7 +8,9 @@ The original Coquelicot dataset cannot be shared due to confidentiality and data
 The provided code focuses on anti-HCV outcomes. Adapting the same pipeline to analyze HCV RNA is straightforward and follows the same structure.
 ________________________________________
 *Folder structure*
+
 ```R Markdown scripts and STATA script```
+
 File	                                   | Description
 1_descriptive_2013.Rmd                   | Generates some descriptive statistics for the 2013 survey wave.
 2_from_intermediate_to_final_dataset.Rmd | Transforms raw datasets into a final, clean merged dataset for the three survey editions. Creates ‘Coq_combined.csv’ file.
@@ -34,6 +36,7 @@ Contains the original raw datasets like:
 These datasets are synthetic mock versions and do not contain real data. They enable the code to run identically.
 ________________________________________
 *Variable Legend*
+
 Variable      |	Type	            | Description
 edit	        | Numeric (year)	  | Survey year. Values: 2004, 2013, 2023.
 cserv         |	String	          | Service center/site code (e.g., "P32").
@@ -56,6 +59,7 @@ prisonvie	    | Binary (0/1)	    | Ever been in prison: 1 = Yes, 0 = No.
 typhabitat	  | Categorical (1–3) |	Type of housing: e.g., 1 = stable, 2 = unstable, 3 = homeless.
 ________________________________________
  *Dependencies*
+ 
 Key R Packages (version used: 4.3.3)
 •	tidyverse for data manipulation
 •	survey for complex survey design modeling
@@ -66,13 +70,16 @@ STATA (version used: STATA 18.0)
 •	Used for fractional polynomial model selection : 4_frac_poly_functional_form.do
 ________________________________________
 *Notes*
+
 •	All file paths are handled with the here::here() function for portability.
 •	Bootstrap models take time due to 2000 resampling loops (expected run time for demo on a personal computer: less than 4 minutes).
 ________________________________________
 *Data Availability*
+
 The original Coquelicot HCV dataset is not publicly shared due to privacy regulations and ethical restrictions. Instead, we provide fake data to allow full transparency of the methods and calculations. The code has been tested to ensure it runs correctly on these simulated datasets.
 ________________________________________
 *Workflow and execution order*
+
 1.	1_descriptive_2013.Rmd – Descriptive stats
 2.	2_from_intermediate_to_final_dataset.Rmd – Data preparation
 3.	3_prevalence_results_from_data_2013.Rmd – Data prevalence
